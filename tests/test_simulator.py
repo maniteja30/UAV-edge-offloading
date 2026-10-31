@@ -28,6 +28,33 @@ class SimulatorTests(unittest.TestCase):
             self.assertEqual(decode_action(i, candidates), pair)
             self.assertEqual(encode_action(pair, candidates), i)
 
+    def test_network_has_required_link_types(self):
+        kinds = {link["kind"] for edges in self.sim.network.values() for link in edges.values()}
+        self.assertIn("air", kinds)
+        self.assertIn("backhaul", kinds)
+        # Every air link is symmetric and has a positive Shannon rate.
+        for u, neighbors in self.sim.network.items():
+            for v, link in neighbors.items():
+                self.assertIn(u, self.sim.network[v])
+                self.assertGreater(link["rate_bps"], 0)
+
+    def test_routes_use_connected_hops_and_reach_cloud(self):
+        for destination in self.sim.candidates("U0"):
+            path = self.sim._path("U0", destination)
+            self.assertTrue(path, f"No route from U0 to {destination}")
+            self.assertEqual(path[0], "U0")
+            self.assertEqual(path[-1], destination)
+            for u, v in zip(path, path[1:]):
+                self.assertIn(v, self.sim.network[u])
+        cloud_path = self.sim._path("U0", "CLOUD")
+        self.assertEqual(self.sim.nodes[cloud_path[-2]].kind, "edge")
+
+    def test_unreachable_destination_is_marked_infeasible(self):
+        isolated = OffloadingSimulator(Config(task_count=1, air_link_range_m=0.1))
+        self.assertEqual(isolated._path("U0", "E0"), [])
+        branch = isolated._branch(isolated.tasks[0], "E0", isolated.nodes)
+        self.assertFalse(branch["feasible"])
+
     def test_transmission_delay(self):
         a, b = self.sim.nodes["U0"], self.sim.nodes["E0"]
         self.assertGreater(self.sim.transmission_time(1.0, a, b), 0)

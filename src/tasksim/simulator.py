@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import combinations_with_replacement
-from math import ceil, hypot, log2, sqrt
+from math import ceil, log2, sqrt
+import heapq
 from typing import Dict, List, Tuple
 import copy
 import random
@@ -50,6 +51,8 @@ class Config:
     noise_density_w_hz: float = 1e-17
     edge_cloud_rate_bps: float = 100e6
     edge_cloud_delay_s: float = 0.035
+    # Assumed maximum air-to-air radio distance; not numerically specified in the report.
+    air_link_range_m: float = 700.0
     user_memory_capacity_mb: float = 1024.0
     edge_memory_capacity_mb: float = 8192.0
     cloud_memory_capacity_mb: float = 1_000_000.0
@@ -114,6 +117,7 @@ class OffloadingSimulator:
         self.cfg = config or Config()
         self.rng = random.Random(self.cfg.seed)
         self.nodes = self._make_nodes()
+        self.network = self._build_network()
         self.tasks = self._make_tasks()
 
     def _make_nodes(self) -> Dict[str, Node]:
@@ -198,21 +202,54 @@ class OffloadingSimulator:
     def distance(a: Node, b: Node) -> float:
         return sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2)
 
-    def transmission_rate(self, a: Node, b: Node) -> float:
-        """Shannon rate; radio constants are configurable assumptions."""
-        if {a.kind, b.kind} == {"edge", "cloud"}:
-            return self.cfg.edge_cloud_rate_bps
-        d = max(1.0, self.distance(a, b))
+    def _build_network(self) -> Dict[str, Dict[str, dict]]:
+        """Build an explicit undirected U-U, U-E, E-E and E-C link graph.
+
+        Air links are present only within ``air_link_range_m``. Every edge UAV
+        has a backhaul link to the logical cloud endpoint. Link range and
+        backhaul parameters are configurable assumptions, not report values.
+        """
+        graph: Dict[str, Dict[str, dict]] = {node_id: {} for node_id in self.nodes}
+        aerial = [n for n in self.nodes.values() if n.kind in ("user", "edge")]
+        for i, a in enumerate(aerial):
+            for b in aerial[i + 1:]:
+                distance = self.distance(a, b)
+                if distance <= self.cfg.air_link_range_m:
+                    rate = self._shannon_rate(a, b, distance)
+                    link = {"rate_bps": rate, "distance_m": distance, "kind": "air", "delay_s": 0.0}
+                    graph[a.node_id][b.node_id] = link
+                    graph[b.node_id][a.node_id] = link
+        cloud = self.nodes["CLOUD"]
+        for edge in (n for n in self.nodes.values() if n.kind == "edge"):
+            link = {"rate_bps": self.cfg.edge_cloud_rate_bps,
+                    "distance_m": None, "kind": "backhaul",
+                    "delay_s": self.cfg.edge_cloud_delay_s}
+            graph[edge.node_id][cloud.node_id] = link
+            graph[cloud.node_id][edge.node_id] = link
+        return graph
+
+    def _shannon_rate(self, a: Node, b: Node, distance: float) -> float:
+        d = max(1.0, distance)
         snr = (
             self.cfg.tx_power_w * self.cfg.reference_gain * d ** (-self.cfg.path_loss_exponent)
             / (self.cfg.noise_density_w_hz * self.cfg.bandwidth_hz)
         )
         return self.cfg.bandwidth_hz * log2(1.0 + snr)
 
+    def transmission_rate(self, a: Node, b: Node) -> float:
+        """Return the configured rate for a directly connected pair, else zero."""
+        if a.node_id == b.node_id:
+            return float("inf")
+        link = self.network.get(a.node_id, {}).get(b.node_id)
+        return link["rate_bps"] if link else 0.0
+
     def transmission_time(self, data_mb: float, a: Node, b: Node) -> float:
         if a.node_id == b.node_id:
             return 0.0
-        return data_mb * 8e6 / max(1.0, self.transmission_rate(a, b))
+        rate = self.transmission_rate(a, b)
+        if rate <= 0.0:
+            return float("inf")
+        return data_mb * 8e6 / rate
 
     def candidates(self, source_id: str) -> List[str]:
         source = self.nodes[source_id]
@@ -227,31 +264,62 @@ class OffloadingSimulator:
         return list(combinations_with_replacement(self.candidates(source_id), self.cfg.subtasks))
 
     def _path(self, source_id: str, destination_id: str) -> List[str]:
+        """Find the minimum-transmission-time feasible route using Dijkstra.
+
+        The graph includes multi-hop U-U/U-E/E-E air links and E-C backhaul.
+        An empty list means no route exists.
+        """
         if source_id == destination_id:
             return [source_id]
-        dest = self.nodes[destination_id]
-        if dest.kind in ("user", "edge"):
-            return [source_id, destination_id]
-        edges = [n for n in self.nodes.values() if n.kind == "edge"]
-        gateway = min(
-            edges,
-            key=lambda e: self.transmission_time(
-                self.cfg.input_mb / self.cfg.subtasks, self.nodes[source_id], e
-            ) + self.cfg.edge_cloud_delay_s,
-        )
-        return [source_id, gateway.node_id, "CLOUD"]
+        if source_id not in self.network or destination_id not in self.network:
+            return []
+        distances = {node_id: float("inf") for node_id in self.network}
+        previous: Dict[str, str] = {}
+        distances[source_id] = 0.0
+        queue = [(0.0, source_id)]
+        while queue:
+            cost, current = heapq.heappop(queue)
+            if cost != distances[current]:
+                continue
+            if current == destination_id:
+                break
+            for neighbor, link in self.network[current].items():
+                rate = link["rate_bps"]
+                hop_cost = 8e6 / max(1.0, rate) + link.get("delay_s", 0.0)  # seconds for 1 MB
+                candidate = cost + hop_cost
+                if candidate < distances[neighbor]:
+                    distances[neighbor] = candidate
+                    previous[neighbor] = current
+                    heapq.heappush(queue, (candidate, neighbor))
+        if distances[destination_id] == float("inf"):
+            return []
+        path = [destination_id]
+        while path[-1] != source_id:
+            parent = previous.get(path[-1])
+            if parent is None:
+                return []
+            path.append(parent)
+        return list(reversed(path))
 
     def _branch(self, task: Task, destination_id: str, nodes: Dict[str, Node]) -> dict:
         p = self.cfg.subtasks
         in_mb, out_mb = task.input_mb / p, task.output_mb / p
         cycles, memory = task.cpu_cycles / p, task.memory_mb / p
         path = self._path(task.source_id, destination_id)
+        if not path:
+            return {"destination": destination_id, "completion": float("inf"),
+                    "energy": float("inf"), "forward": float("inf"), "queue": 0,
+                    "compute": 0, "return": float("inf"), "path": [], "feasible": False}
         now = task.arrival_s
         comm_energy = 0.0
         forward = 0.0
         for u, v in zip(path, path[1:]):
             a, b = nodes[u], nodes[v]
             tx = self.transmission_time(in_mb, a, b)
+            if not (tx < float("inf")):
+                return {"destination": destination_id, "completion": float("inf"),
+                        "energy": float("inf"), "forward": float("inf"), "queue": 0,
+                        "compute": 0, "return": float("inf"), "path": path, "feasible": False}
             if a.kind == "edge" and b.kind == "cloud":
                 tx += self.cfg.edge_cloud_delay_s
             forward += tx
@@ -273,6 +341,10 @@ class OffloadingSimulator:
         for u, v in zip(reversed(path[1:]), reversed(path[:-1])):
             a, b = nodes[u], nodes[v]
             tx = self.transmission_time(out_mb, a, b)
+            if not (tx < float("inf")):
+                return {"destination": destination_id, "completion": float("inf"),
+                        "energy": float("inf"), "forward": forward, "queue": queue,
+                        "compute": compute, "return": float("inf"), "path": path, "feasible": False}
             if a.kind == "cloud" and b.kind == "edge":
                 tx += self.cfg.edge_cloud_delay_s
             ret += tx
