@@ -1,0 +1,292 @@
+{
+  "User": [
+    {
+      "attributes": {
+        "id": 1,
+        "coordinates": [100, 100],
+        "coordinates_trace": [
+          [100, 100], [100, 100], [100, 100], [100, 100], [100, 100],
+          [100, 100], [100, 100], [100, 100], [100, 100], [100, 100],
+          [100, 100], [100, 100], [100, 100], [100, 100], [100, 100],
+          [100, 100], [100, 100], [100, 100], [100, 100], [100, 100]
+        ],
+        "delays": {},
+        "delay_slas": {},
+        "communication_paths": {},
+        "making_requests": {},
+        "mobility_model_parameters": {},
+        "role": "user_uav",
+        "battery_wh": 100,
+        "local_cpu_capacity": 2,
+        "local_memory_gb": 4
+      },
+      "relationships": {
+        "access_patterns": {},
+        "mobility_model": "hold_position",
+        "applications": [],
+        "base_station": null
+      }
+    }
+  ],
+  "EdgeServer": [
+    {
+      "attributes": {
+        "id": 1,
+        "available": true,
+        "model_name": "Edge_UAV_1",
+        "cpu": 20,
+        "memory": 32,
+        "disk": 100,
+        "cpu_demand": 0,
+        "memory_demand": 0,
+        "disk_demand": 0,
+        "coordinates": [200, 300],
+        "max_concurrent_layer_downloads": 3,
+        "active": true,
+        "power_model_parameters": {},
+        "role": "edge_uav",
+        "battery_wh": 100,
+        "mobility_enabled": true,
+        "mobility_speed_mps": 15,
+        "mobility_waypoints": [[300, 300], [400, 400], [300, 500], [200, 300]],
+        "mobility_waypoint_index": 0
+      },
+      "relationships": {
+        "power_model": null,
+        "base_station": null,
+        "network_switch": null,
+        "services": [],
+        "container_layers": [],
+        "container_images": [],
+        "container_registries": []
+      }
+    },
+    {
+      "attributes": {
+        "id": 2,
+        "available": true,
+        "model_name": "Edge_UAV_2",
+        "cpu": 25,
+        "memory": 32,
+        "disk": 100,
+        "cpu_demand": 0,
+        "memory_demand": 0,
+        "disk_demand": 0,
+        "coordinates": [500, 300],
+        "max_concurrent_layer_downloads": 3,
+        "active": true,
+        "power_model_parameters": {},
+        "role": "edge_uav",
+        "battery_wh": 100,
+        "mobility_enabled": true,
+        "mobility_speed_mps": 12,
+        "mobility_waypoints": [[600, 350], [700, 400], [600, 500], [500, 300]],
+        "mobility_waypoint_index": 0
+      },
+      "relationships": {
+        "power_model": null,
+        "base_station": null,
+        "network_switch": null,
+        "services": [],
+        "container_layers": [],
+        "container_images": [],
+        "container_registries": []
+      }
+    },
+    {
+      "attributes": {
+        "id": 3,
+        "available": true,
+        "model_name": "Edge_UAV_3",
+        "cpu": 30,
+        "memory": 64,
+        "disk": 150,
+        "cpu_demand": 0,
+        "memory_demand": 0,
+        "disk_demand": 0,
+        "coordinates": [700, 700],
+        "max_concurrent_layer_downloads": 3,
+        "active": true,
+        "power_model_parameters": {},
+        "role": "edge_uav",
+        "battery_wh": 100,
+        "mobility_enabled": true,
+        "mobility_speed_mps": 8,
+        "mobility_waypoints": [[600, 700], [500, 600], [600, 500], [700, 700]],
+        "mobility_waypoint_index": 0
+      },
+      "relationships": {
+        "power_model": null,
+        "base_station": null,
+        "network_switch": null,
+        "services": [],
+        "container_layers": [],
+        "container_images": [],
+        "container_registries": []
+      }
+    },
+    {
+      "attributes": {
+        "id": 4,
+        "available": true,
+        "model_name": "Cloud_Server",
+        "cpu": 100,
+        "memory": 512,
+        "disk": 2000,
+        "cpu_demand": 0,
+        "memory_demand": 0,
+        "disk_demand": 0,
+        "coordinates": [1000, 1000],
+        "max_concurrent_layer_downloads": 3,
+        "active": true,
+        "power_model_parameters": {},
+        "role": "cloud",
+        "battery_wh": null,
+        "mobility_enabled": false,
+        "mobility_speed_mps": 0,
+        "mobility_waypoints": [],
+        "mobility_waypoint_index": 0
+      },
+      "relationships": {
+        "power_model": null,
+        "base_station": null,
+        "network_switch": null,
+        "services": [],
+        "container_layers": [],
+        "container_images": [],
+        "container_registries": []
+      }
+    }
+  ],
+  "NetworkLink": [
+    {
+      "attributes": {
+        "id": 1,
+        "delay": 10,
+        "bandwidth": 50,
+        "bandwidth_demand": 0,
+        "active": true,
+        "link_role": "access",
+        "reference_bandwidth_mbps": 50,
+        "base_delay_ms": 10,
+        "max_range_m": 900
+      },
+      "relationships": {
+        "topology": {"class": "Topology", "id": 1},
+        "active_flows": [],
+        "applications": [],
+        "nodes": [
+          {"class": "User", "id": 1},
+          {"class": "EdgeServer", "id": 1}
+        ]
+      }
+    },
+    {
+      "attributes": {
+        "id": 2,
+        "delay": 20,
+        "bandwidth": 30,
+        "bandwidth_demand": 0,
+        "active": true,
+        "link_role": "access",
+        "reference_bandwidth_mbps": 30,
+        "base_delay_ms": 10,
+        "max_range_m": 900
+      },
+      "relationships": {
+        "topology": {"class": "Topology", "id": 1},
+        "active_flows": [],
+        "applications": [],
+        "nodes": [
+          {"class": "User", "id": 1},
+          {"class": "EdgeServer", "id": 2}
+        ]
+      }
+    },
+    {
+      "attributes": {
+        "id": 3,
+        "delay": 30,
+        "bandwidth": 20,
+        "bandwidth_demand": 0,
+        "active": true,
+        "link_role": "access",
+        "reference_bandwidth_mbps": 20,
+        "base_delay_ms": 10,
+        "max_range_m": 900
+      },
+      "relationships": {
+        "topology": {"class": "Topology", "id": 1},
+        "active_flows": [],
+        "applications": [],
+        "nodes": [
+          {"class": "User", "id": 1},
+          {"class": "EdgeServer", "id": 3}
+        ]
+      }
+    },
+    {
+      "attributes": {
+        "id": 4,
+        "delay": 40,
+        "bandwidth": 100,
+        "bandwidth_demand": 0,
+        "active": true,
+        "link_role": "backhaul",
+        "reference_bandwidth_mbps": 100,
+        "fixed_delay_ms": 40
+      },
+      "relationships": {
+        "topology": {"class": "Topology", "id": 1},
+        "active_flows": [],
+        "applications": [],
+        "nodes": [
+          {"class": "EdgeServer", "id": 1},
+          {"class": "EdgeServer", "id": 4}
+        ]
+      }
+    },
+    {
+      "attributes": {
+        "id": 5,
+        "delay": 35,
+        "bandwidth": 100,
+        "bandwidth_demand": 0,
+        "active": true,
+        "link_role": "backhaul",
+        "reference_bandwidth_mbps": 100,
+        "fixed_delay_ms": 35
+      },
+      "relationships": {
+        "topology": {"class": "Topology", "id": 1},
+        "active_flows": [],
+        "applications": [],
+        "nodes": [
+          {"class": "EdgeServer", "id": 2},
+          {"class": "EdgeServer", "id": 4}
+        ]
+      }
+    },
+    {
+      "attributes": {
+        "id": 6,
+        "delay": 30,
+        "bandwidth": 100,
+        "bandwidth_demand": 0,
+        "active": true,
+        "link_role": "backhaul",
+        "reference_bandwidth_mbps": 100,
+        "fixed_delay_ms": 30
+      },
+      "relationships": {
+        "topology": {"class": "Topology", "id": 1},
+        "active_flows": [],
+        "applications": [],
+        "nodes": [
+          {"class": "EdgeServer", "id": 3},
+          {"class": "EdgeServer", "id": 4}
+        ]
+      }
+    }
+  ]
+}
