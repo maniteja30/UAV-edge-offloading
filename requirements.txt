@@ -1,2 +1,2 @@
-edge-sim-py
 networkx
+git+https://github.com/EdgeSimPy/EdgeSimPy.git
