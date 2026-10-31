@@ -5,3 +5,12 @@ __pycache__/
 venv/
 *.egg-info/
 .DS_Store
+
+# Generated model checkpoints
+checkpoints/
+
+# Generated experiment results
+results/
+
+# Pytest cache
+.pytest_cache/

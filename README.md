@@ -34,3 +34,8 @@ python -m pip install --requirement requirements.txt
 - [ ] State/action representation and DDQN (`src/rl/`)
 - [ ] Baselines (`src/baselines/`)
 - [ ] Scalability experiments
+
+## Implementation Progress
+
+See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for the current
+implementation status, completed components, testing, and pending work.

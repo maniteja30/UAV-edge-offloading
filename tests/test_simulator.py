@@ -1,7 +1,7 @@
 import unittest
 
-from src.tasksim.simulator import Config, OffloadingSimulator
-from src.baselines.policies import (
+from tasksim.simulator import Config, OffloadingSimulator
+from baselines.policies import (
     enumerate_actions,
     encode_action,
     decode_action,

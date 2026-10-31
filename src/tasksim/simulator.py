@@ -58,7 +58,15 @@ class Config:
 
     split_cycles: float = 1e6
     aggregation_cycles: float = 1e6
+
+    # CPU energy model.
+    # Tier-specific coefficients override the common coefficient.
+    # None preserves the original common-coefficient behaviour.
     cpu_energy_coefficient: float = 1e-28
+
+    user_cpu_energy_coefficient: float | None = None
+    edge_cpu_energy_coefficient: float | None = None
+    cloud_cpu_energy_coefficient: float | None = None
 
     energy_reference_j: float = 0.1
     load_reference: float = 0.25
@@ -558,8 +566,36 @@ class OffloadingSimulator:
         ):
             return {"feasible": False}
 
+        # Select the CPU energy coefficient for this node type.
+        if node.kind == "user":
+            coefficient = (
+                self.cfg.user_cpu_energy_coefficient
+                if self.cfg.user_cpu_energy_coefficient is not None
+                else self.cfg.cpu_energy_coefficient
+            )
+
+        elif node.kind == "edge":
+            coefficient = (
+                self.cfg.edge_cpu_energy_coefficient
+                if self.cfg.edge_cpu_energy_coefficient is not None
+                else self.cfg.cpu_energy_coefficient
+            )
+
+        elif node.kind == "cloud":
+            coefficient = (
+                self.cfg.cloud_cpu_energy_coefficient
+                if self.cfg.cloud_cpu_energy_coefficient is not None
+                else self.cfg.cpu_energy_coefficient
+            )
+
+        else:
+            raise ValueError(
+                f"Unknown node kind: {node.kind}"
+            )
+
+        # CPU energy consumption.
         energy = (
-            self.cfg.cpu_energy_coefficient
+            coefficient
             * (node.cpu_hz ** 2)
             * cycles
         )
@@ -1043,8 +1079,15 @@ class OffloadingSimulator:
     @staticmethod
     def summarize(results: List[TaskResult]) -> dict:
 
-        latencies = [r.latency_s for r in results]
-        energies = [r.energy_j for r in results]
+        latencies = [
+            r.latency_s for r in results
+            if r.latency_s < float("inf")
+        ]
+
+        energies = [
+            r.energy_j for r in results
+            if r.energy_j < float("inf")
+        ]
 
         if latencies:
             ordered = sorted(latencies)
@@ -1074,7 +1117,9 @@ class OffloadingSimulator:
             "mean_load_imbalance": (
                 statistics.mean(
                     r.load_imbalance for r in results
+                    if r.latency_s < float("inf")
                 )
-                if results else 0.0
+                if any(r.latency_s < float("inf") for r in results)
+                else 0.0
             ),
         }
