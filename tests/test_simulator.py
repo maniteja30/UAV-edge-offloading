@@ -7,6 +7,16 @@ class SimulatorTests(unittest.TestCase):
     def setUp(self):
         self.sim = OffloadingSimulator(Config(task_count=4, seed=3))
 
+    def test_report_base_configuration(self):
+        cfg = Config()
+        self.assertEqual((cfg.n_users, cfg.n_edges, cfg.helpers_per_source, cfg.subtasks), (10, 3, 2, 2))
+        self.assertEqual(cfg.user_cpu_hz, 4e9)
+        self.assertEqual(cfg.edge_cpu_hz, 10e9)
+        self.assertEqual(cfg.cloud_cpu_hz, 100e9)
+        self.assertEqual(cfg.bandwidth_hz, 20e6)
+        self.assertEqual(cfg.episode_duration_s, 60.0)
+        self.assertEqual(cfg.arrival_rate_per_user, 0.5)
+
     def test_base_candidate_count(self):
         self.assertEqual(len(self.sim.candidates("U0")), 7)
 
@@ -25,6 +35,24 @@ class SimulatorTests(unittest.TestCase):
     def test_local_transmission_is_zero(self):
         a = self.sim.nodes["U0"]
         self.assertEqual(self.sim.transmission_time(1.0, a, a), 0)
+
+    def test_poisson_arrivals_are_reproducible_and_within_episode(self):
+        cfg = Config(seed=17)
+        first = OffloadingSimulator(cfg).tasks
+        second = OffloadingSimulator(cfg).tasks
+        self.assertEqual(
+            [(t.source_id, t.arrival_s) for t in first],
+            [(t.source_id, t.arrival_s) for t in second],
+        )
+        self.assertGreater(len(first), 0)
+        self.assertTrue(all(0 <= t.arrival_s < cfg.episode_duration_s for t in first))
+        self.assertEqual([t.arrival_s for t in first], sorted(t.arrival_s for t in first))
+
+    def test_poisson_task_count_is_reasonable_for_seeded_base_case(self):
+        tasks = OffloadingSimulator(Config(seed=7)).tasks
+        # E[N] = 10 users * 0.5 tasks/s * 60 s = 300 tasks.
+        self.assertGreater(len(tasks), 220)
+        self.assertLess(len(tasks), 380)
 
     def test_end_to_end_policy(self):
         results = self.sim.run_policy("greedy")
