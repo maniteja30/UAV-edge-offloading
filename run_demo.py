@@ -13,7 +13,7 @@ def main():
     cfg = Config(seed=args.seed, task_count=40 if args.smoke else None)
     sim = OffloadingSimulator(cfg)
 
-    print("UAV EDGE-OFFLOADING MILESTONE 2A")
+    print("UAV EDGE-OFFLOADING MILESTONE 2B.2")
     print(f"Users={cfg.n_users}, Edge UAVs={cfg.n_edges}, Cloud=1")
     print(f"Episode={cfg.episode_duration_s:.1f}s, arrival rate={cfg.arrival_rate_per_user:.2f} tasks/s/User")
     print(f"Generated tasks={len(sim.tasks)} (Poisson arrivals unless --smoke is used)")
