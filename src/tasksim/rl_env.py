@@ -359,15 +359,6 @@ class OffloadingRLEnv:
         return self.sim.action_pairs(task.source_id)
 
     def get_action_mask(self):
-        """
-        Return one Boolean per action.
-
-        True means physically feasible.
-
-        The result is cached because the environment state does
-        not change between consecutive calls.
-        """
-
         if self._action_mask_cache is not None:
             return self._action_mask_cache.copy()
 
@@ -377,25 +368,39 @@ class OffloadingRLEnv:
             return [False] * self.action_size
 
         pairs = self.get_action_pairs()
-        mask = []
-
-        for pair in pairs:
-            result = self.sim.evaluate_pair(
+        results = [
+            self.sim.evaluate_pair(
                 task,
                 pair,
                 self.nodes,
                 self.network,
             )
+            for pair in pairs
+        ]
 
-            mask.append(
-                isfinite(result.latency_s)
-                and isfinite(result.objective)
+        physically_feasible = [
+            isfinite(result.latency_s)
+            and isfinite(result.objective)
+            for result in results
+        ]
+
+        deadline_feasible = [
+            feasible and result.deadline_met
+            for feasible, result in zip(
+                physically_feasible,
+                results,
             )
+        ]
+
+        mask = (
+            deadline_feasible
+            if any(deadline_feasible)
+            else physically_feasible
+        )
 
         self._action_mask_cache = mask
 
         return mask.copy()
-
     # -----------------------------------------------------
     # Environment step
     # -----------------------------------------------------

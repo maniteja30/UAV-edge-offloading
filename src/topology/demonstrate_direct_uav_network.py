@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import math
 from typing import Iterable
-
+from pathlib import Path
 import networkx as nx
 from edge_sim_py import EdgeServer, NetworkLink, Simulator, User
 
-DATASET_FILE = "direct_uav_network.json"
+DATASET_FILE = str (Path(__file__).resolve().parents[2] / "data" / "direct_uav_network.json")
 SIMULATION_STEPS = 12
 TICK_SECONDS = 1.0
 
