@@ -89,3 +89,23 @@ def test_reset_restores_episode():
     assert len(state) == 70
     assert env.current_index == 0
     assert len(env.results) == 0
+
+
+def test_episode_summary_includes_network_lifetime_metrics():
+    env = OffloadingRLEnv(Config(task_count=3))
+
+    for _ in range(3):
+        mask = env.get_action_mask()
+        action = mask.index(True) if any(mask) else None
+        env.step(action)
+
+    summary = env.get_episode_summary()
+
+    assert summary["uav_count"] == 13
+    assert summary["active_uav_count"] <= 13
+    assert summary["depleted_uav_count"] >= 0
+    assert summary["total_initial_energy_j"] > 0.0
+    assert summary["total_residual_energy_j"] <= summary["total_initial_energy_j"]
+    assert len(summary["residual_energy_by_uav_j"]) == 13
+    assert isinstance(summary["energy_timeline"], list)
+    assert summary["lifetime_threshold_fraction"] == 0.01

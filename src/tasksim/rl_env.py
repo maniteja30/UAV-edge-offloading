@@ -522,4 +522,10 @@ class OffloadingRLEnv:
     # -----------------------------------------------------
 
     def get_episode_summary(self):
-        return self.sim.summarize(self.results)
+        return self.sim.summarize(
+            self.results,
+            nodes=self.nodes,
+            lifetime_threshold_fraction=(
+                self.config.lifetime_death_threshold_fraction
+            ),
+        )

@@ -56,6 +56,9 @@ class Config:
     user_battery_j: float = 500_000.0
     edge_battery_j: float = 2_000_000.0
 
+    # A UAV is counted as energy-depleted at or below this fraction.
+    lifetime_death_threshold_fraction: float = 0.01
+
     split_cycles: float = 1e6
     aggregation_cycles: float = 1e6
 
@@ -87,6 +90,9 @@ class Node:
     memory_mb: float
     z: float = 100.0
     battery_j: float = float("inf")
+    initial_battery_j: float = float("inf")
+    # (simulated completion time, energy in joules, operation type).
+    energy_events: List[Tuple[float, float, str]] = field(default_factory=list)
 
     # CPU scheduling state.
     available_at: float = 0.0
@@ -127,11 +133,43 @@ class OffloadingSimulator:
 
     def __init__(self, config: Config | None = None):
         self.cfg = config or Config()
+        self._validate_config()
         self.rng = random.Random(self.cfg.seed)
 
         self.nodes = self._make_nodes()
         self.network = self._build_network()
         self.tasks = self._make_tasks()
+
+    def _validate_config(self):
+        """Validate topology and episode settings before building resources."""
+
+        cfg = self.cfg
+
+        if cfg.n_users <= 0:
+            raise ValueError("n_users must be greater than zero")
+
+        if cfg.n_edges < 0:
+            raise ValueError("n_edges cannot be negative")
+
+        if cfg.helpers_per_source < 0:
+            raise ValueError("helpers_per_source cannot be negative")
+
+        if cfg.subtasks <= 0:
+            raise ValueError("subtasks must be greater than zero")
+
+        if cfg.area_width_m <= 0 or cfg.area_height_m <= 0:
+            raise ValueError("Area dimensions must be positive")
+
+        if cfg.episode_duration_s <= 0:
+            raise ValueError("episode_duration_s must be positive")
+
+        if cfg.task_count is not None and cfg.task_count < 0:
+            raise ValueError("task_count cannot be negative")
+
+        if not 0.0 <= cfg.lifetime_death_threshold_fraction < 1.0:
+            raise ValueError(
+                "lifetime_death_threshold_fraction must be in [0, 1)"
+            )
 
     # ---------------------------------------------------------
     # Node and task creation
@@ -162,8 +200,10 @@ class OffloadingSimulator:
                 memory_mb=cfg.user_memory_capacity_mb,
                 z=cfg.uav_altitude_m,
                 battery_j=cfg.user_battery_j,
+                initial_battery_j=cfg.user_battery_j,
             )
 
+        # Preserve the original positions for the first four edge UAVs.
         edge_positions = [
             (0.20 * cfg.area_width_m, 0.20 * cfg.area_height_m),
             (0.80 * cfg.area_width_m, 0.20 * cfg.area_height_m),
@@ -171,8 +211,44 @@ class OffloadingSimulator:
             (0.85 * cfg.area_width_m, 0.75 * cfg.area_height_m),
         ]
 
+        # For larger topologies, add deterministic grid positions. Increase
+        # grid resolution until enough distinct positions have been found.
+        grid_size = 2
+        minimum_separation_m = 1.0
+
+        while len(edge_positions) < cfg.n_edges:
+            for row in range(grid_size):
+                for column in range(grid_size):
+                    x = (
+                        (column + 0.5)
+                        * cfg.area_width_m
+                        / grid_size
+                    )
+                    y = (
+                        (row + 0.5)
+                        * cfg.area_height_m
+                        / grid_size
+                    )
+
+                    is_distinct = all(
+                        math.hypot(x - px, y - py)
+                        >= minimum_separation_m
+                        for px, py in edge_positions
+                    )
+
+                    if is_distinct:
+                        edge_positions.append((x, y))
+
+                    if len(edge_positions) >= cfg.n_edges:
+                        break
+
+                if len(edge_positions) >= cfg.n_edges:
+                    break
+
+            grid_size += 1
+
         for i in range(cfg.n_edges):
-            x, y = edge_positions[i % len(edge_positions)]
+            x, y = edge_positions[i]
 
             nodes[f"E{i}"] = Node(
                 node_id=f"E{i}",
@@ -183,6 +259,7 @@ class OffloadingSimulator:
                 memory_mb=cfg.edge_memory_capacity_mb,
                 z=cfg.uav_altitude_m,
                 battery_j=cfg.edge_battery_j,
+                initial_battery_j=cfg.edge_battery_j,
             )
 
         nodes["CLOUD"] = Node(
@@ -194,6 +271,7 @@ class OffloadingSimulator:
             memory_mb=cfg.cloud_memory_capacity_mb,
             z=0.0,
             battery_j=float("inf"),
+            initial_battery_j=float("inf"),
         )
 
         return nodes
@@ -492,6 +570,10 @@ class OffloadingSimulator:
                 return {"feasible": False}
 
             sender.battery_j -= energy
+            if energy > 0.0:
+                sender.energy_events.append(
+                    (finish_transmission, energy, "transmission")
+                )
 
         # The link is occupied during transmission, not propagation.
         link["available_at"] = finish_transmission
@@ -605,6 +687,10 @@ class OffloadingSimulator:
                 return {"feasible": False}
 
             node.battery_j -= energy
+            if energy > 0.0:
+                node.energy_events.append(
+                    (finish, energy, "computation")
+                )
 
         node.available_at = finish
         node.busy_cycles += cycles
@@ -982,7 +1068,9 @@ class OffloadingSimulator:
     # Policies and resource commitment
     # ---------------------------------------------------------
 
-    def run_policy(self, policy: str) -> List[TaskResult]:
+    def run_policy(
+        self, policy: str, return_resources: bool = False
+    ) -> List[TaskResult] | tuple[List[TaskResult], Dict[str, Node]]:
 
         nodes, network = copy.deepcopy(
             (self.nodes, self.network)
@@ -1070,14 +1158,123 @@ class OffloadingSimulator:
 
             results.append(result)
 
+        if return_resources:
+            return results, nodes
+
         return results
 
     # ---------------------------------------------------------
-    # Result summary
+        # Result summary
     # ---------------------------------------------------------
 
     @staticmethod
-    def summarize(results: List[TaskResult]) -> dict:
+    def lifetime_summary(
+        nodes: Dict[str, Node],
+        death_threshold_fraction: float = 0.01,
+    ) -> dict:
+        """Summarize UAV energy-reserve lifetime from committed energy events.
+
+        Energy events are timestamped at operation completion. This makes
+        lifetime a function of simulated time even though the resource model
+        reserves/deducts battery when an operation is scheduled.
+        """
+
+        if not 0.0 <= death_threshold_fraction < 1.0:
+            raise ValueError("death_threshold_fraction must be in [0, 1)")
+
+        uavs = sorted(
+            (node for node in nodes.values() if node.kind in ("user", "edge")),
+            key=lambda node: node.node_id,
+        )
+
+        remaining = {
+            node.node_id: max(0.0, node.initial_battery_j)
+            for node in uavs
+        }
+        thresholds = {
+            node.node_id: node.initial_battery_j * death_threshold_fraction
+            for node in uavs
+        }
+
+        events = sorted(
+            (
+                (time_s, node.node_id, energy_j, operation)
+                for node in uavs
+                for time_s, energy_j, operation in node.energy_events
+            ),
+            key=lambda event: (event[0], event[1], event[3]),
+        )
+
+        first_node_death_s = None
+        death_node_id = None
+        timeline = [{
+            "time_s": 0.0,
+            "total_residual_energy_j": sum(remaining.values()),
+            "active_uavs": sum(
+                remaining[node.node_id] > thresholds[node.node_id]
+                for node in uavs
+            ),
+        }]
+
+        # A zero-capacity UAV starts at the threshold and is depleted at t=0.
+        initially_depleted = [
+            node for node in uavs
+            if remaining[node.node_id] <= thresholds[node.node_id]
+        ]
+        if initially_depleted:
+            first_node_death_s = 0.0
+            death_node_id = initially_depleted[0].node_id
+
+        for time_s, node_id, energy_j, _operation in events:
+            remaining[node_id] = max(0.0, remaining[node_id] - energy_j)
+
+            if (
+                first_node_death_s is None
+                and remaining[node_id] <= thresholds[node_id]
+            ):
+                first_node_death_s = time_s
+                death_node_id = node_id
+
+            timeline.append({
+                "time_s": time_s,
+                "total_residual_energy_j": sum(remaining.values()),
+                "active_uavs": sum(
+                    remaining[node.node_id] > thresholds[node.node_id]
+                    for node in uavs
+                ),
+            })
+
+        residual_by_uav = {
+            node.node_id: max(0.0, node.battery_j)
+            for node in uavs
+        }
+        total_initial = sum(node.initial_battery_j for node in uavs)
+        total_residual = sum(residual_by_uav.values())
+        active_count = sum(
+            residual_by_uav[node.node_id] > thresholds[node.node_id]
+            for node in uavs
+        )
+
+        return {
+            "uav_count": len(uavs),
+            "active_uav_count": active_count,
+            "depleted_uav_count": len(uavs) - active_count,
+            "total_initial_energy_j": total_initial,
+            "total_residual_energy_j": total_residual,
+            "residual_energy_by_uav_j": residual_by_uav,
+            "first_node_death_s": first_node_death_s,
+            "first_node_death_uav": death_node_id,
+            "network_lifetime_s": first_node_death_s,
+            "lifetime_threshold_fraction": death_threshold_fraction,
+            "energy_timeline": timeline,
+        }
+
+    @staticmethod
+    def summarize(
+        results: List[TaskResult],
+        nodes: Dict[str, Node] | None = None,
+        lifetime_threshold_fraction: float = 0.01,
+    ) -> dict:
 
         latencies = [
             r.latency_s for r in results
@@ -1097,7 +1294,7 @@ class OffloadingSimulator:
         else:
             p95 = 0.0
 
-        return {
+        summary = {
             "tasks": len(results),
             "mean_latency_s": (
                 statistics.mean(latencies) if latencies else 0.0
@@ -1123,3 +1320,13 @@ class OffloadingSimulator:
                 else 0.0
             ),
         }
+
+        if nodes is not None:
+            summary.update(
+                OffloadingSimulator.lifetime_summary(
+                    nodes, lifetime_threshold_fraction
+                )
+            )
+
+        return summary
+
