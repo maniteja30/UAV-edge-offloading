@@ -1,4 +1,6 @@
 
+from types import SimpleNamespace
+
 from tasksim.simulator import Config
 from tasksim.rl_env import OffloadingRLEnv
 
@@ -24,6 +26,63 @@ def test_action_mask():
 
     assert len(mask) == 28
     assert all(isinstance(x, bool) for x in mask)
+
+
+def test_action_mask_uses_soft_deadline_handling(monkeypatch):
+    env = OffloadingRLEnv(
+        Config(task_count=1)
+    )
+
+    evaluations = [
+        SimpleNamespace(
+            latency_s=3.0,
+            objective=2.0,
+            deadline_met=False,
+        ),
+        SimpleNamespace(
+            latency_s=1.0,
+            objective=1.0,
+            deadline_met=True,
+        ),
+        SimpleNamespace(
+            latency_s=float("inf"),
+            objective=float("inf"),
+            deadline_met=False,
+        ),
+    ]
+
+    evaluations.extend([
+        SimpleNamespace(
+            latency_s=1.0,
+            objective=1.0,
+            deadline_met=True,
+        )
+        for _ in range(25)
+    ])
+
+    evaluation_iter = iter(evaluations)
+
+    monkeypatch.setattr(
+        env.sim,
+        "evaluate_pair",
+        lambda *args, **kwargs: next(evaluation_iter),
+    )
+
+    # Clear the mask cached during environment initialization.
+    env._action_mask_cache = None
+
+    mask = env.get_action_mask()
+
+    assert len(mask) == 28
+
+    # Physically feasible, but misses the deadline.
+    assert mask[0] is True
+
+    # Physically feasible and meets the deadline.
+    assert mask[1] is True
+
+    # Physically infeasible.
+    assert mask[2] is False
 
 
 def test_environment_step():

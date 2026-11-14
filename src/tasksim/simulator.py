@@ -1,8 +1,9 @@
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import combinations_with_replacement
-from math import ceil, log2, sqrt
+from math import ceil, isfinite, log2, sqrt
 from typing import Dict, List, Tuple
 import copy
 import heapq
@@ -211,8 +212,7 @@ class OffloadingSimulator:
             (0.85 * cfg.area_width_m, 0.75 * cfg.area_height_m),
         ]
 
-        # For larger topologies, add deterministic grid positions. Increase
-        # grid resolution until enough distinct positions have been found.
+        # For larger topologies, add deterministic grid positions.
         grid_size = 2
         minimum_separation_m = 1.0
 
@@ -1024,8 +1024,8 @@ class OffloadingSimulator:
         """
         Return one Boolean per action.
 
-        True means the action is physically feasible and meets the deadline.
-        The output length remains 28 for the base configuration.
+        Only physical feasibility determines whether an action is valid.
+        Deadline violations are handled through the objective penalty.
         """
 
         pairs = self.action_pairs(task.source_id)
@@ -1040,8 +1040,8 @@ class OffloadingSimulator:
             )
 
             mask.append(
-                result.latency_s < float("inf")
-                and result.deadline_met
+                isfinite(result.latency_s)
+                and isfinite(result.objective)
             )
 
         return mask
@@ -1059,9 +1059,7 @@ class OffloadingSimulator:
         )
 
         return [
-            pair
-            for pair, valid in zip(pairs, mask)
-            if valid
+            pair for pair, valid in zip(pairs, mask) if valid
         ]
 
     # ---------------------------------------------------------
@@ -1118,7 +1116,7 @@ class OffloadingSimulator:
                     (result, pair)
                     for result, pair in evaluations
                     if result.deadline_met
-                    and result.latency_s < float("inf")
+                    and isfinite(result.latency_s)
                 ]
 
                 # If none meet the deadline, use the best
@@ -1127,7 +1125,8 @@ class OffloadingSimulator:
                     valid = [
                         (result, pair)
                         for result, pair in evaluations
-                        if result.latency_s < float("inf")
+                        if isfinite(result.latency_s)
+                        and isfinite(result.objective)
                     ]
 
                 if valid:
@@ -1152,7 +1151,7 @@ class OffloadingSimulator:
 
             # Commit only physically feasible executions.
             # Failed trial evaluations do not consume resources.
-            if result.latency_s < float("inf"):
+            if isfinite(result.latency_s):
                 nodes = updated_nodes
                 network = updated_network
 
@@ -1164,7 +1163,7 @@ class OffloadingSimulator:
         return results
 
     # ---------------------------------------------------------
-        # Result summary
+    # Network lifetime
     # ---------------------------------------------------------
 
     @staticmethod
@@ -1183,7 +1182,10 @@ class OffloadingSimulator:
             raise ValueError("death_threshold_fraction must be in [0, 1)")
 
         uavs = sorted(
-            (node for node in nodes.values() if node.kind in ("user", "edge")),
+            (
+                node for node in nodes.values()
+                if node.kind in ("user", "edge")
+            ),
             key=lambda node: node.node_id,
         )
 
@@ -1191,6 +1193,7 @@ class OffloadingSimulator:
             node.node_id: max(0.0, node.initial_battery_j)
             for node in uavs
         }
+
         thresholds = {
             node.node_id: node.initial_battery_j * death_threshold_fraction
             for node in uavs
@@ -1207,6 +1210,7 @@ class OffloadingSimulator:
 
         first_node_death_s = None
         death_node_id = None
+
         timeline = [{
             "time_s": 0.0,
             "total_residual_energy_j": sum(remaining.values()),
@@ -1221,12 +1225,16 @@ class OffloadingSimulator:
             node for node in uavs
             if remaining[node.node_id] <= thresholds[node.node_id]
         ]
+
         if initially_depleted:
             first_node_death_s = 0.0
             death_node_id = initially_depleted[0].node_id
 
         for time_s, node_id, energy_j, _operation in events:
-            remaining[node_id] = max(0.0, remaining[node_id] - energy_j)
+            remaining[node_id] = max(
+                0.0,
+                remaining[node_id] - energy_j,
+            )
 
             if (
                 first_node_death_s is None
@@ -1248,8 +1256,13 @@ class OffloadingSimulator:
             node.node_id: max(0.0, node.battery_j)
             for node in uavs
         }
-        total_initial = sum(node.initial_battery_j for node in uavs)
+
+        total_initial = sum(
+            node.initial_battery_j for node in uavs
+        )
+
         total_residual = sum(residual_by_uav.values())
+
         active_count = sum(
             residual_by_uav[node.node_id] > thresholds[node.node_id]
             for node in uavs
@@ -1269,6 +1282,10 @@ class OffloadingSimulator:
             "energy_timeline": timeline,
         }
 
+    # ---------------------------------------------------------
+    # Result summary
+    # ---------------------------------------------------------
+
     @staticmethod
     def summarize(
         results: List[TaskResult],
@@ -1278,12 +1295,12 @@ class OffloadingSimulator:
 
         latencies = [
             r.latency_s for r in results
-            if r.latency_s < float("inf")
+            if isfinite(r.latency_s)
         ]
 
         energies = [
             r.energy_j for r in results
-            if r.energy_j < float("inf")
+            if isfinite(r.energy_j)
         ]
 
         if latencies:
@@ -1314,9 +1331,9 @@ class OffloadingSimulator:
             "mean_load_imbalance": (
                 statistics.mean(
                     r.load_imbalance for r in results
-                    if r.latency_s < float("inf")
+                    if isfinite(r.latency_s)
                 )
-                if any(r.latency_s < float("inf") for r in results)
+                if any(isfinite(r.latency_s) for r in results)
                 else 0.0
             ),
         }
@@ -1324,9 +1341,9 @@ class OffloadingSimulator:
         if nodes is not None:
             summary.update(
                 OffloadingSimulator.lifetime_summary(
-                    nodes, lifetime_threshold_fraction
+                    nodes,
+                    lifetime_threshold_fraction,
                 )
             )
 
         return summary
-

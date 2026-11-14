@@ -359,6 +359,15 @@ class OffloadingRLEnv:
         return self.sim.action_pairs(task.source_id)
 
     def get_action_mask(self):
+        """
+        Return the physical-feasibility mask for all actions.
+
+        Soft deadline handling:
+        - Physically feasible actions remain valid.
+        - Deadline violations do not invalidate actions.
+        - Physically infeasible actions are masked.
+        """
+
         if self._action_mask_cache is not None:
             return self._action_mask_cache.copy()
 
@@ -368,6 +377,7 @@ class OffloadingRLEnv:
             return [False] * self.action_size
 
         pairs = self.get_action_pairs()
+
         results = [
             self.sim.evaluate_pair(
                 task,
@@ -378,29 +388,16 @@ class OffloadingRLEnv:
             for pair in pairs
         ]
 
-        physically_feasible = [
+        mask = [
             isfinite(result.latency_s)
             and isfinite(result.objective)
             for result in results
         ]
 
-        deadline_feasible = [
-            feasible and result.deadline_met
-            for feasible, result in zip(
-                physically_feasible,
-                results,
-            )
-        ]
-
-        mask = (
-            deadline_feasible
-            if any(deadline_feasible)
-            else physically_feasible
-        )
-
         self._action_mask_cache = mask
 
         return mask.copy()
+
     # -----------------------------------------------------
     # Environment step
     # -----------------------------------------------------
@@ -477,6 +474,8 @@ class OffloadingRLEnv:
             self.nodes = updated_nodes
             self.network = updated_network
 
+            # Deadline misses are not masked.
+            # Their effect depends on the simulator objective.
             reward = -result.objective
 
             self.results.append(result)
