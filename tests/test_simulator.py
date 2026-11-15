@@ -33,7 +33,27 @@ class SimulatorTests(unittest.TestCase):
         self.assertEqual(cfg.cloud_cpu_hz, 100e9)
         self.assertEqual(cfg.bandwidth_hz, 20e6)
         self.assertEqual(cfg.episode_duration_s, 60.0)
-        self.assertEqual(cfg.arrival_rate_per_user, 0.5)
+        self.assertEqual(cfg.arrival_rate_per_user, 0.8)
+        self.assertEqual(cfg.cpu_cycles, 1e9)
+
+    def test_original_objective_formula_is_preserved(self):
+        sim = OffloadingSimulator(
+            Config(task_count=1, seed=11, arrival_rate_per_user=0.8, cpu_cycles=1e9)
+        )
+        task = sim.tasks[0]
+        feasible_results = [
+            sim.evaluate_pair(task, pair)
+            for pair in sim.action_pairs(task.source_id)
+        ]
+        result = next(r for r in feasible_results if r.latency_s < float("inf"))
+
+        expected = (
+            0.5 * result.latency_s / task.deadline_s
+            + 0.3 * result.energy_j / 0.1
+            + 0.2 * result.load_imbalance / 0.25
+            + max(0.0, (result.latency_s - task.deadline_s) / task.deadline_s)
+        )
+        self.assertAlmostEqual(result.objective, expected, places=10)
 
     def test_base_candidate_count(self):
         self.assertEqual(len(self.sim.candidates("U0")), 7)
@@ -144,13 +164,14 @@ class SimulatorTests(unittest.TestCase):
             sorted(t.arrival_s for t in first),
         )
 
-    def test_poisson_task_count_is_reasonable_for_seeded_base_case(self):
+    def test_poisson_task_count_is_reasonable_for_experiment2(self):
         tasks = OffloadingSimulator(
             Config(seed=7)
         ).tasks
 
-        self.assertGreater(len(tasks), 220)
-        self.assertLess(len(tasks), 380)
+        # Experiment 2: E[N] = 10 users * 0.8 tasks/s/user * 60 s = 480.
+        self.assertGreater(len(tasks), 400)
+        self.assertLess(len(tasks), 560)
 
     def test_end_to_end_policy(self):
         results = self.sim.run_policy("greedy")
