@@ -1,6 +1,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from tasksim.simulator import Config
 from tasksim.rl_env import OffloadingRLEnv
 
@@ -68,20 +70,14 @@ def test_action_mask_uses_soft_deadline_handling(monkeypatch):
         lambda *args, **kwargs: next(evaluation_iter),
     )
 
-    # Clear the mask cached during environment initialization.
     env._action_mask_cache = None
 
     mask = env.get_action_mask()
 
     assert len(mask) == 28
 
-    # Physically feasible, but misses the deadline.
     assert mask[0] is True
-
-    # Physically feasible and meets the deadline.
     assert mask[1] is True
-
-    # Physically infeasible.
     assert mask[2] is False
 
 
@@ -107,6 +103,103 @@ def test_environment_step():
     assert isinstance(reward, float)
     assert truncated is False
     assert "objective" in step_info
+
+
+def test_deadline_miss_penalty():
+    env = OffloadingRLEnv(
+        Config(task_count=1),
+        deadline_miss_penalty=5.0,
+    )
+
+    env.get_action_mask = lambda: [True] + [False] * 27
+
+    result = SimpleNamespace(
+        destinations=("U0", "U1"),
+        latency_s=3.0,
+        energy_j=1.0,
+        load_imbalance=0.1,
+        deadline_met=False,
+        objective=2.0,
+    )
+
+    env.sim._simulate_pair = lambda *args, **kwargs: (
+        result,
+        env.nodes,
+        env.network,
+    )
+
+    _, reward, _, _, info = env.step(0)
+
+    assert reward == -7.0
+    assert info["objective"] == 2.0
+    assert info["deadline_met"] is False
+
+
+def test_no_deadline_penalty_when_deadline_is_met():
+    env = OffloadingRLEnv(
+        Config(task_count=1),
+        deadline_miss_penalty=5.0,
+    )
+
+    env.get_action_mask = lambda: [True] + [False] * 27
+
+    result = SimpleNamespace(
+        destinations=("U0", "U1"),
+        latency_s=1.0,
+        energy_j=1.0,
+        load_imbalance=0.1,
+        deadline_met=True,
+        objective=2.0,
+    )
+
+    env.sim._simulate_pair = lambda *args, **kwargs: (
+        result,
+        env.nodes,
+        env.network,
+    )
+
+    _, reward, _, _, info = env.step(0)
+
+    assert reward == -2.0
+    assert info["objective"] == 2.0
+    assert info["deadline_met"] is True
+
+
+def test_zero_deadline_penalty_preserves_original_reward():
+    env = OffloadingRLEnv(
+        Config(task_count=1),
+        deadline_miss_penalty=0.0,
+    )
+
+    env.get_action_mask = lambda: [True] + [False] * 27
+
+    result = SimpleNamespace(
+        destinations=("U0", "U1"),
+        latency_s=3.0,
+        energy_j=1.0,
+        load_imbalance=0.1,
+        deadline_met=False,
+        objective=2.0,
+    )
+
+    env.sim._simulate_pair = lambda *args, **kwargs: (
+        result,
+        env.nodes,
+        env.network,
+    )
+
+    _, reward, _, _, info = env.step(0)
+
+    assert reward == -2.0
+    assert info["objective"] == 2.0
+
+
+def test_negative_deadline_miss_penalty_rejected():
+    with pytest.raises(ValueError):
+        OffloadingRLEnv(
+            Config(task_count=1),
+            deadline_miss_penalty=-1.0,
+        )
 
 
 def test_episode_completion():

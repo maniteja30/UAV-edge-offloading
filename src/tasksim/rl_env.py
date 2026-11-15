@@ -36,12 +36,19 @@ class OffloadingRLEnv:
         self,
         config: Optional[Config] = None,
         infeasible_penalty: float = INFEASIBLE_PENALTY,
+        deadline_miss_penalty: float = 0.0,
     ):
         self.config = deepcopy(config or Config())
         self.infeasible_penalty = float(infeasible_penalty)
+        self.deadline_miss_penalty = float(deadline_miss_penalty)
 
         if self.infeasible_penalty <= 0:
             raise ValueError("infeasible_penalty must be positive")
+
+        if self.deadline_miss_penalty < 0:
+            raise ValueError(
+                "deadline_miss_penalty cannot be negative"
+            )
 
         self.sim: OffloadingSimulator
         self.nodes = None
@@ -56,7 +63,6 @@ class OffloadingRLEnv:
         self.state_size = 0
         self.action_size = 0
 
-        # Cache the action mask until the environment state changes.
         self._action_mask_cache = None
 
         self.reset()
@@ -75,7 +81,6 @@ class OffloadingRLEnv:
 
         self.sim = OffloadingSimulator(cfg)
 
-        # Maintain separate mutable resources for this episode.
         self.nodes, self.network = deepcopy(
             (self.sim.nodes, self.sim.network)
         )
@@ -474,9 +479,12 @@ class OffloadingRLEnv:
             self.nodes = updated_nodes
             self.network = updated_network
 
-            # Deadline misses are not masked.
-            # Their effect depends on the simulator objective.
+            # The original simulator objective is preserved.
             reward = -result.objective
+
+            # Additional training reward penalty for deadline misses.
+            if not result.deadline_met:
+                reward -= self.deadline_miss_penalty
 
             self.results.append(result)
 
@@ -484,7 +492,6 @@ class OffloadingRLEnv:
 
         self.current_index += 1
 
-        # The task and resource state have changed.
         self._action_mask_cache = None
 
         self.done = (

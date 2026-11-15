@@ -1,3 +1,4 @@
+
 import argparse
 import csv
 import random
@@ -29,6 +30,13 @@ def parse_args():
         type=float,
         default=1e-28,
         help="CPU energy coefficient used by the simulator",
+    )
+
+    parser.add_argument(
+        "--deadline-miss-penalty",
+        type=float,
+        default=0.0,
+        help="Additional reward penalty for missing a task deadline",
     )
 
     parser.add_argument("--batch-size", type=int, default=64)
@@ -75,6 +83,9 @@ def validate_args(args):
 
     if args.energy_coefficient <= 0:
         raise ValueError("energy-coefficient must be positive")
+
+    if args.deadline_miss_penalty < 0:
+        raise ValueError("deadline-miss-penalty cannot be negative")
 
     if args.batch_size <= 0 or args.buffer_capacity <= 0:
         raise ValueError("batch-size and buffer-capacity must be positive")
@@ -176,6 +187,7 @@ def main():
     print(f"CPU cycles per task: {args.cpu_cycles}")
     print(f"Deadline: {args.deadline} seconds")
     print(f"CPU energy coefficient: {args.energy_coefficient:.2e}")
+    print(f"Deadline-miss penalty: {args.deadline_miss_penalty}")
     print(f"Epsilon decay: {args.epsilon_decay}")
     print(f"Checkpoint: {checkpoint_path}")
     print(f"Output tag: {tag}")
@@ -211,7 +223,11 @@ def main():
             seed=episode_seed,
         )
 
-        env = OffloadingRLEnv(config)
+        env = OffloadingRLEnv(
+            config,
+            deadline_miss_penalty=args.deadline_miss_penalty,
+        )
+
         state, info = env.reset(seed=episode_seed)
 
         if agent is None:
@@ -263,7 +279,6 @@ def main():
                     dtype=bool,
                 )
 
-            # Store transitions only when a valid action was selected.
             if action is not None:
                 replay_buffer.push(
                     state,
@@ -318,10 +333,8 @@ def main():
             epsilon * args.epsilon_decay,
         )
 
-    # Save the trained model.
     agent.save(str(checkpoint_path))
 
-    # Save episode-level training results.
     csv_path = output_dir / f"dqn_training_{tag}.csv"
 
     with csv_path.open("w", newline="") as file:
@@ -344,7 +357,6 @@ def main():
                 episode_success_rates[i],
             ])
 
-    # Save action-selection counts.
     action_csv_path = (
         output_dir / f"dqn_training_action_counts_{tag}.csv"
     )
@@ -364,7 +376,6 @@ def main():
             no_feasible_action_count,
         ])
 
-    # Save training graph.
     plot_path = output_dir / f"dqn_training_{tag}.png"
 
     save_training_plot(
