@@ -21,13 +21,15 @@ class Config:
 
     input_mb: float = 2.0
     output_mb: float = 0.1
-    cpu_cycles: float = 5e8
+    # Experiment 2 workload: 1 billion CPU cycles per task.
+    cpu_cycles: float = 1e9
     memory_mb: float = 256.0
     deadline_s: float = 2.0
     subtasks: int = 2
 
     episode_duration_s: float = 60.0
-    arrival_rate_per_user: float = 0.5
+    # Experiment 2 workload: expected 0.8 * 10 * 60 = 480 tasks/episode.
+    arrival_rate_per_user: float = 0.8
     task_count: int | None = None
     seed: int = 7
 
@@ -72,6 +74,9 @@ class Config:
     edge_cpu_energy_coefficient: float | None = None
     cloud_cpu_energy_coefficient: float | None = None
 
+    # Original shared-simulator objective references and weights:
+    # J = 0.5*(L/D) + 0.3*(E/0.1) + 0.2*(I/0.25)
+    #     + max(0, (L-D)/D)
     energy_reference_j: float = 0.1
     load_reference: float = 0.25
     deadline_penalty: float = 1.0
@@ -953,10 +958,14 @@ class OffloadingSimulator:
             (latency - task.deadline_s) / task.deadline_s,
         )
 
+        # Keep the shared objective unchanged. With the default Config values,
+        # this is exactly:
+        # J = 0.5*(L/D) + 0.3*(E/0.1) + 0.2*(I/0.25)
+        #     + max(0, (L-D)/D)
         objective = (
-            self.cfg.w_latency * latency / task.deadline_s
-            + self.cfg.w_energy * energy / self.cfg.energy_reference_j
-            + self.cfg.w_load * load / self.cfg.load_reference
+            self.cfg.w_latency * (latency / task.deadline_s)
+            + self.cfg.w_energy * (energy / self.cfg.energy_reference_j)
+            + self.cfg.w_load * (load / self.cfg.load_reference)
             + self.cfg.deadline_penalty * penalty
         )
 
